@@ -188,10 +188,10 @@ public class MainActivity extends Activity {
 
     private byte[] buildSelectApdu(byte[] aid) {
         byte[] apdu = new byte[6 + aid.length];
-        apdu[0] = 0x00; apdu[1] = 0xA4; apdu[2] = 0x04; apdu[3] = 0x00;
+        apdu[0] = 0; apdu[1] = (byte)0xA4; apdu[2] = 4; apdu[3] = 0;
         apdu[4] = (byte) aid.length;
         System.arraycopy(aid, 0, apdu, 5, aid.length);
-        apdu[5 + aid.length] = 0x00;
+        apdu[5 + aid.length] = 0;
         return apdu;
     }
 
