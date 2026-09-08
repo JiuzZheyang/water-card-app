@@ -24,13 +24,20 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final String TAG = "WaterCard";
 
+    // Helper to avoid int-to-byte narrowing issues
+    private static byte[] b(int... vals) {
+        byte[] r = new byte[vals.length];
+        for (int i = 0; i < vals.length; i++) r[i] = (byte) vals[i];
+        return r;
+    }
+
     // 常见水卡 AID 列表
     private static final byte[][] COMMON_AIDS = {
-            new byte[]{0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00},
-            new byte[]{(byte)0xA0, 0x00, 0x00, 0x03, 0x06, 0x00},
-            new byte[]{(byte)0xA0, 0x00, 0x00, 0x02, 0x01, 0x01},
-            new byte[]{0x00, 0x00, 0x00, 0x04, 0x30, 0x00},
-            new byte[]{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+            b(0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00),
+            b(0xA0, 0x00, 0x00, 0x03, 0x06, 0x00),
+            b(0xA0, 0x00, 0x00, 0x02, 0x01, 0x01),
+            b(0x00, 0x00, 0x00, 0x04, 0x30, 0x00),
+            b(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08),
     };
 
     private NfcAdapter nfcAdapter;
@@ -181,7 +188,7 @@ public class MainActivity extends Activity {
 
     private byte[] buildSelectApdu(byte[] aid) {
         byte[] apdu = new byte[6 + aid.length];
-        apdu[0] = 0x00; apdu[1] = (byte) 0xA4; apdu[2] = 0x04; apdu[3] = 0x00;
+        apdu[0] = 0x00; apdu[1] = 0xA4; apdu[2] = 0x04; apdu[3] = 0x00;
         apdu[4] = (byte) aid.length;
         System.arraycopy(aid, 0, apdu, 5, aid.length);
         apdu[5 + aid.length] = 0x00;
@@ -191,17 +198,17 @@ public class MainActivity extends Activity {
     private void readCardFiles(IsoDep isoDep, StringBuilder output) throws IOException {
         appendLog("--- 读取卡片文件 ---");
         byte[][] cmds = {
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x00, 0x00},
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x10, 0x00},
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x14, 0x00},
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x18, 0x00},
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x1C, 0x00},
-                new byte[]{0x00, (byte)0xB0, 0x00, 0x20, 0x00},
-                new byte[]{0x00, (byte)0xB2, 0x01, (byte)0xD0, 0x00},
-                new byte[]{0x00, (byte)0xB2, 0x02, (byte)0xD0, 0x00},
-                new byte[]{0x80, 0x5C, 0x00, 0x01, 0x00},
-                new byte[]{0x00, (byte)0xCA, 0x01, 0x00, 0x00},
-                new byte[]{0x80, (byte)0x84, 0x00, 0x00, 0x00},
+                b(0x00, 0xB0, 0x00, 0x00, 0x00),
+                b(0x00, 0xB0, 0x00, 0x10, 0x00),
+                b(0x00, 0xB0, 0x00, 0x14, 0x00),
+                b(0x00, 0xB0, 0x00, 0x18, 0x00),
+                b(0x00, 0xB0, 0x00, 0x1C, 0x00),
+                b(0x00, 0xB0, 0x00, 0x20, 0x00),
+                b(0x00, 0xB2, 0x01, 0xD0, 0x00),
+                b(0x00, 0xB2, 0x02, 0xD0, 0x00),
+                b(0x80, 0x5C, 0x00, 0x01, 0x00),
+                b(0x00, 0xCA, 0x01, 0x00, 0x00),
+                b(0x80, 0x84, 0x00, 0x00, 0x00),
         };
         for (byte[] cmd : cmds) {
             try {
@@ -223,10 +230,10 @@ public class MainActivity extends Activity {
         appendLog("--- 通用探测 ---");
         for (int sfi = 0; sfi <= 7; sfi++) {
             for (int f = 0; f <= 0x1F; f++) {
-                byte[] cmd = new byte[]{0x00, (byte) 0xB0, (byte) (0x80 | f), (byte) (sfi << 3 | 0x04), 0x00};
+                byte[] cmd = b(0x00, 0xB0, 0x80 | f, (sfi << 3) | 0x04, 0x00);
                 try {
                     byte[] resp = isoDep.transceive(cmd);
-                    if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte) 0x90 && resp[resp.length - 1] == 0x00) {
+                    if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte)0x90 && resp[resp.length - 1] == 0x00) {
                         byte[] data = Arrays.copyOf(resp, resp.length - 2);
                         if (data.length > 0) {
                             appendLog("文件 F=" + String.format("%02X", f) + " SFI=" + sfi + ": " + bytesToHex(data));
@@ -249,7 +256,7 @@ public class MainActivity extends Activity {
         try {
             nfcA.connect();
             appendLog("NfcA ATQA:" + bytesToHex(nfcA.getAtqa()) + " SAK:" + String.format("%02X", nfcA.getSak()));
-            byte[] resp = nfcA.transceive(new byte[]{0x30, 0x00});
+            byte[] resp = nfcA.transceive(b(0x30, 0x00));
             if (resp != null) appendLog("块0: " + bytesToHex(resp));
             nfcA.close();
         } catch (Exception e) { appendLog("NfcA 失败: " + e.getMessage()); }
