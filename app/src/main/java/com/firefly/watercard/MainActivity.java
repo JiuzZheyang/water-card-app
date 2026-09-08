@@ -108,8 +108,6 @@ public class MainActivity extends Activity {
         super.onResume();
         if (nfcAdapter == null) return;
         try {
-            NfcAdapter.DefaultAdapterAssertions.assertUsable(nfcAdapter);
-            // 使用 enableReaderMode 替代 enableForegroundDispatch，更稳定
             nfcAdapter.enableReaderMode(this,
                 (tag) -> runOnUiThread(() -> handleTag(tag)),
                 NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
@@ -117,6 +115,9 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Log.e(TAG, "enableReaderMode 失败，尝试 foregroundDispatch", e);
             try {
+                pendingIntent = PendingIntent.getActivity(this, 0,
+                    new Intent(this, getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE);
                 nfcAdapter.enableForegroundDispatch(this, pendingIntent,
                     new IntentFilter[]{new IntentFilter(NfcAdapter.ACTION_TECH_DISCOVERED)}, null);
             } catch (Exception e2) {
