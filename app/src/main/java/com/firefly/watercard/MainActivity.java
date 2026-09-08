@@ -180,9 +180,11 @@ public class MainActivity extends Activity {
             tryGenericIsoDepRead(isoDep, allData);
         }
         lastRawData = allData.toString();
+        final String raw = lastRawData;
+        final String status = foundApp ? "✅ 读取完成" : "⚠️ 部分读取";
         runOnUiThread(() -> {
-            tvRawData.setText(lastRawData.isEmpty() ? "（无数据）" : lastRawData);
-            tvStatus.setText(foundApp ? "✅ 读取完成" : "⚠️ 部分读取");
+            tvRawData.setText(raw.isEmpty() ? "（无数据）" : raw);
+            tvStatus.setText(status);
         });
     }
 
