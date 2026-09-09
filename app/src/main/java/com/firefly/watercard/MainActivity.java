@@ -31,21 +31,16 @@ public class MainActivity extends Activity {
         return r;
     }
 
-    private static final byte[][] COMMON_AIDS = {
-            b(0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00),
-            b(0xA0, 0x00, 0x00, 0x03, 0x06, 0x00),
-            b(0xA0, 0x00, 0x00, 0x02, 0x01, 0x01),
-            b(0x00, 0x00, 0x00, 0x04, 0x30, 0x00),
-            b(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08),
-    };
+    private static final byte[] KNOWN_CPU_CMD = b(
+        0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x44, (byte)0xA3,
+        0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA
+    );
 
     private NfcAdapter nfcAdapter;
     private PendingIntent pendingIntent;
-
     private TextView tvStatus, tvCardInfo, tvUid, tvAts;
     private TextView tvRawData, tvBalance, tvLog;
     private Button btnRetry, btnSave;
-
     private StringBuilder logBuilder = new StringBuilder();
     private String lastRawData = "", lastUid = "", lastAts = "";
 
@@ -58,27 +53,26 @@ public class MainActivity extends Activity {
             initNfc();
             handleIntent(getIntent());
         } catch (Exception e) {
-            Log.e(TAG, "onCreate 崩溃", e);
-            Toast.makeText(this, "启动错误: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Log.e(TAG, "onCreate crashed", e);
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
             try { setContentView(R.layout.activity_main); } catch (Exception ignored) {}
             initViews();
         }
     }
 
     private void initViews() {
-        tvStatus   = findViewById(R.id.tv_status);
+        tvStatus = findViewById(R.id.tv_status);
         tvCardInfo = findViewById(R.id.tv_card_info);
-        tvUid      = findViewById(R.id.tv_uid);
-        tvAts      = findViewById(R.id.tv_ats);
-        tvRawData  = findViewById(R.id.tv_raw_data);
-        tvBalance  = findViewById(R.id.tv_balance);
-        tvLog      = findViewById(R.id.tv_log);
-        btnRetry   = findViewById(R.id.btn_retry);
-        btnSave    = findViewById(R.id.btn_save);
-
+        tvUid = findViewById(R.id.tv_uid);
+        tvAts = findViewById(R.id.tv_ats);
+        tvRawData = findViewById(R.id.tv_raw_data);
+        tvBalance = findViewById(R.id.tv_balance);
+        tvLog = findViewById(R.id.tv_log);
+        btnRetry = findViewById(R.id.btn_retry);
+        btnSave = findViewById(R.id.btn_save);
         btnRetry.setOnClickListener(v -> {
-            appendLog("请将水卡贴在手机 NFC 天线位置...");
-            tvStatus.setText("请贴卡...");
+            appendLog("Please place card on NFC antenna...");
+            tvStatus.setText("Waiting for card...");
         });
         btnSave.setOnClickListener(v -> saveDataToFile());
     }
@@ -86,18 +80,17 @@ public class MainActivity extends Activity {
     private void initNfc() {
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
         if (nfcAdapter == null) {
-            tvStatus.setText("❌ 设备不支持 NFC");
-            appendLog("错误：此设备没有 NFC 硬件");
+            tvStatus.setText("NFC not supported");
+            appendLog("No NFC hardware");
             return;
         }
         if (!nfcAdapter.isEnabled()) {
-            tvStatus.setText("⚠️ 请先开启 NFC");
-            appendLog("请到系统设置 → NFC → 开启 NFC");
+            tvStatus.setText("Please enable NFC");
+            appendLog("Enable NFC in settings");
             return;
         }
-        tvStatus.setText("✅ NFC 就绪，请贴卡");
-        appendLog("NFC 已就绪，请将水卡贴在手机背面 NFC 天线处");
-
+        tvStatus.setText("NFC Ready");
+        appendLog("NFC ready. Place card on phone NFC area");
         pendingIntent = PendingIntent.getActivity(this, 0,
                 new Intent(this, getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_IMMUTABLE);
@@ -113,7 +106,7 @@ public class MainActivity extends Activity {
                 NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
                 null);
         } catch (Exception e) {
-            Log.e(TAG, "enableReaderMode 失败，尝试 foregroundDispatch", e);
+            Log.e(TAG, "enableReaderMode failed, trying foregroundDispatch", e);
             try {
                 pendingIntent = PendingIntent.getActivity(this, 0,
                     new Intent(this, getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -121,8 +114,8 @@ public class MainActivity extends Activity {
                 nfcAdapter.enableForegroundDispatch(this, pendingIntent,
                     new IntentFilter[]{new IntentFilter(NfcAdapter.ACTION_TECH_DISCOVERED)}, null);
             } catch (Exception e2) {
-                Log.e(TAG, "enableForegroundDispatch 也失败", e2);
-                appendLog("NFC 初始化失败: " + e2.getMessage());
+                Log.e(TAG, "enableForegroundDispatch also failed", e2);
+                appendLog("NFC init failed: " + e2.getMessage());
             }
         }
     }
@@ -146,8 +139,8 @@ public class MainActivity extends Activity {
         try {
             handleIntent(intent);
         } catch (Exception e) {
-            Log.e(TAG, "onNewIntent 崩溃", e);
-            Toast.makeText(this, "处理 NFC 事件错误: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Log.e(TAG, "onNewIntent crashed", e);
+            Toast.makeText(this, "NFC Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -162,109 +155,226 @@ public class MainActivity extends Activity {
     }
 
     private void handleTag(Tag tag) {
-        appendLog("检测到卡片");
+        appendLog("Card detected");
         byte[] uid = tag.getId();
-        lastUid = uid != null ? bytesToHex(uid) : "无";
+        lastUid = uid != null ? bytesToHex(uid) : "null";
         tvUid.setText("UID: " + lastUid);
         appendLog("UID: " + lastUid);
-        tvCardInfo.setText("技术: " + Arrays.toString(tag.getTechList()));
-
+        tvCardInfo.setText("Tech: " + Arrays.toString(tag.getTechList()));
         IsoDep isoDep = IsoDep.get(tag);
         if (isoDep != null) {
             try {
                 isoDep.connect();
                 byte[] hb = isoDep.getHistoricalBytes();
-                lastAts = hb != null ? bytesToHex(hb) : "无";
+                lastAts = hb != null ? bytesToHex(hb) : "null";
                 tvAts.setText("ATS: " + lastAts);
                 if (hb != null) appendLog("ATS: " + lastAts);
-                tvStatus.setText("📡 读取中...");
+                tvStatus.setText("Reading...");
                 readIsoDepCard(isoDep);
             } catch (Exception e) {
-                Log.e(TAG, "IsoDep 错误", e);
-                appendLog("IsoDep 连接失败: " + e.getMessage());
-                tvStatus.setText("❌ 连接失败");
+                Log.e(TAG, "IsoDep error", e);
+                appendLog("IsoDep connect failed: " + e.getMessage());
+                tvStatus.setText("Connection failed");
             } finally {
                 try { isoDep.close(); } catch (IOException ignored) {}
             }
         } else {
-            appendLog("尝试 NfcA...");
+            appendLog("Trying NfcA...");
             tryNfcA(tag);
         }
-
-        // 贴卡即自动保存
         autoSaveDataToFile();
     }
 
     private void readIsoDepCard(IsoDep isoDep) throws IOException {
         StringBuilder allData = new StringBuilder();
-        boolean foundApp = false;
+        boolean gotData = false;
 
-        // ── 步骤1：先尝试已知可用的 CPU 卡专用命令 ──
-        appendLog("=== 尝试 CPU 专用命令 ===");
-        byte[][] cpuCmds = {
-                // 已知成功的命令（来自另一款读取相同水卡的 APP）
-                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x44, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
-                // 专用命令的各种变体
-                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x04, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
-                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x10, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
-                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x20, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
-                // 其他可能的 CPU 卡读余额命令
-                b(0x80, 0x5C, 0x00, 0x01, 0x02),
-                b(0x80, 0x5C, 0x00, 0x02, 0x02),
-                b(0x00, (byte)0xCA, 0x01, 0x00, 0x00),
-                b(0x80, (byte)0x84, 0x00, 0x00, 0x00),
-                // 发送伪装成 SELECT 的自定义命令（INS=BE）
-                b(0x02, (byte)0xBE, (byte)0x90, 0x00, 0x44),
-                b(0x02, (byte)0xBE, (byte)0x90, 0x00, (byte)0xA3),
+        appendLog("=== Try KNOWN CPU command ===");
+        byte[] r0 = isoDep.transceive(KNOWN_CPU_CMD);
+        logResp("CPU", KNOWN_CPU_CMD, r0);
+        if (r0 != null && r0.length >= 2) {
+            int sw = (r0[r0.length-2] & 0xFF) * 256 + (r0[r0.length-1] & 0xFF);
+            if (sw == 0x4AF1 || sw == 0x9000) {
+                byte[] d = dataOf(r0);
+                if (d.length > 0) {
+                    appendLog("OK! CPU cmd success! Data: " + bytesToHex(d));
+                    allData.append("CPU_DATA:").append(bytesToHex(d)).append("\n");
+                    parseAndShowBalance(d);
+                    gotData = true;
+                }
+            }
+        }
+
+        appendLog("=== SELECT by File ID -> READ ===");
+        int[] fileIds = {
+            0x0005, 0x0006, 0x0007,
+            0x0015, 0x0016, 0x0017,
+            0x0025, 0x0026, 0x0027,
+            0x0035, 0x0036, 0x0037,
+            0x0001, 0x0002, 0x0003, 0x0004,
+            0x0008, 0x0009, 0x000A, 0x000B,
+            0x0010, 0x0011, 0x0012, 0x0013,
+            0x0018, 0x0019, 0x001A,
+            0x0020, 0x0021, 0x0022,
+            0x0030, 0x0031, 0x0032,
+            0x1001, 0x1002, 0x1003,
+            0x2001, 0x2002,
         };
-        for (byte[] cmd : cpuCmds) {
-            try {
-                appendLog("发送[CPU]: " + bytesToHex(cmd));
-                byte[] resp = isoDep.transceive(cmd);
-                if (resp != null && resp.length >= 2) {
-                    int sw1 = resp[resp.length - 2] & 0xFF;
-                    int sw2 = resp[resp.length - 1] & 0xFF;
-                    byte[] data = resp.length > 2 ? Arrays.copyOf(resp, resp.length - 2) : new byte[0];
-                    appendLog("  响应: " + bytesToHex(data) + " [" + String.format("%02X%02X", sw1, sw2) + "]");
-                    if (data.length > 0) {
-                        allData.append("CPU_CMD:").append(bytesToHex(cmd)).append(" DATA:").append(bytesToHex(data)).append("\n");
-                        parseAndShowBalance(data);
-                    }
-                    if (sw1 == 0x90 && sw2 == 0x00 && data.length > 0) {
-                        appendLog("  ✅ CPU 命令成功!");
-                        foundApp = true;
+        for (int fid : fileIds) {
+            byte hi = (byte)(fid >> 8);
+            byte lo = (byte)(fid & 0xFF);
+            byte[] sel = b(0x00, (byte)0xA4, 0x00, 0x00, 0x02, hi, lo);
+            byte[] selResp = isoDep.transceive(sel);
+            int selSW = selResp != null ? sw(selResp) : -1;
+            logResp("SEL_" + String.format("%04X", fid), sel, selResp);
+            if (selSW == 0x9000) {
+                appendLog("  OK! SELECT " + String.format("%04X", fid) + " success");
+                for (int off = 0; off < 256; off += 32) {
+                    byte[] readCmd = b(0x00, (byte)0xB0,
+                            (byte)(off >> 8), (byte)(off & 0xFF), 0x00);
+                    byte[] rr = isoDep.transceive(readCmd);
+                    byte[] rd = dataOf(rr);
+                    int rsw = rr != null ? sw(rr) : -1;
+                    if (rd.length > 0 && !isAllZeros(rd)) {
+                        appendLog("    READ off=" + off + " SW=" + String.format("%04X", rsw)
+                                + " DATA=" + bytesToHex(rd));
+                        allData.append("S").append(String.format("%04X", fid))
+                               .append("O").append(String.format("%02X", off))
+                               .append(":").append(bytesToHex(rd)).append("\n");
+                        parseAndShowBalance(rd);
+                        gotData = true;
                     }
                 }
-            } catch (Exception e) {
-                appendLog("  命令失败: " + e.getMessage());
+                for (int sfi = 0; sfi <= 31; sfi++) {
+                    byte[] sfiCmd = b(0x00, (byte)0xB0, 0x00,
+                            (byte)((sfi << 3) | 0x04), 0x00);
+                    try {
+                        byte[] sr = isoDep.transceive(sfiCmd);
+                        byte[] sd = dataOf(sr);
+                        int ssw = sr != null ? sw(sr) : -1;
+                        if (sd.length > 0 && !isAllZeros(sd)) {
+                            appendLog("    SFI=" + sfi + " SW=" + String.format("%04X", ssw)
+                                    + " DATA=" + bytesToHex(sd));
+                            allData.append("SFI").append(String.format("%02X", sfi))
+                                   .append(":").append(bytesToHex(sd)).append("\n");
+                            parseAndShowBalance(sd);
+                            gotData = true;
+                        }
+                    } catch (Exception ignored) {}
+                }
             }
         }
 
-        // ── 步骤2：标准 AID 选择 ──
-        appendLog("=== 尝试 AID 选择 ===");
-        for (int i = 0; i < COMMON_AIDS.length; i++) {
-            byte[] aid = COMMON_AIDS[i];
-            appendLog("尝试 AID #" + (i + 1) + ": " + bytesToHex(aid));
-            byte[] resp = isoDep.transceive(buildSelectApdu(aid));
-            if (resp != null && resp.length >= 2) {
-                int sw1 = resp[resp.length - 2] & 0xFF;
-                int sw2 = resp[resp.length - 1] & 0xFF;
-                appendLog("  响应: " + String.format("%02X%02X", sw1, sw2));
-                if (sw1 == 0x90 && sw2 == 0x00) {
-                    appendLog("  ✅ 应用选择成功!");
-                    foundApp = true;
-                    readCardFiles(isoDep, allData);
-                    break;
+        appendLog("=== SELECT by AID ===");
+        byte[][] aids = {
+            b(0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00),
+            b(0xA0, 0x00, 0x00, 0x03, 0x06),
+            b(0xA0, 0x00, 0x00, 0x00, 0x03, 0x00),
+            b(0x00, 0x00, 0x00, 0x04, 0x30, 0x00),
+            b(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08),
+        };
+        for (byte[] aid : aids) {
+            byte[] selAid = buildSelectApdu(aid);
+            byte[] sr = isoDep.transceive(selAid);
+            int aidSW = sr != null ? sw(sr) : -1;
+            logResp("AID", selAid, sr);
+            if (aidSW == 0x9000) {
+                appendLog("  OK! AID success: " + bytesToHex(aid));
+                for (int rec = 1; rec <= 30; rec++) {
+                    for (int sfi = 0; sfi <= 31; sfi++) {
+                        byte[] rrCmd = b(0x00, (byte)0xB2, rec,
+                                (byte)((sfi << 3) | 0x04), 0x00);
+                        try {
+                            byte[] rrr = isoDep.transceive(rrCmd);
+                            byte[] rrd = dataOf(rrr);
+                            int rrsw = rrr != null ? sw(rrr) : -1;
+                            if (rrd.length > 0 && !isAllZeros(rrd)) {
+                                appendLog("    REC=" + rec + " SFI=" + sfi
+                                        + " SW=" + String.format("%04X", rrsw)
+                                        + " DATA=" + bytesToHex(rrd));
+                                allData.append("REC").append(String.format("%02X", rec))
+                                       .append("SFI").append(String.format("%02X", sfi))
+                                       .append(":").append(bytesToHex(rrd)).append("\n");
+                                parseAndShowBalance(rrd);
+                                gotData = true;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+                for (int off = 0; off < 256; off += 32) {
+                    byte[] rbCmd = b(0x00, (byte)0xB0,
+                            (byte)(off >> 8), (byte)(off & 0xFF), 0x00);
+                    try {
+                        byte[] rb = isoDep.transceive(rbCmd);
+                        byte[] rbd = dataOf(rb);
+                        int rbsw = rb != null ? sw(rb) : -1;
+                        if (rbd.length > 0 && !isAllZeros(rbd)) {
+                            appendLog("    BIN off=" + off + " SW=" + String.format("%04X", rbsw)
+                                    + " DATA=" + bytesToHex(rbd));
+                            allData.append("BINO").append(String.format("%02X", off))
+                                   .append(":").append(bytesToHex(rbd)).append("\n");
+                            parseAndShowBalance(rbd);
+                            gotData = true;
+                        }
+                    } catch (Exception ignored) {}
                 }
             }
         }
-        if (!foundApp) {
-            appendLog("未匹配 AID，尝试通用探测...");
-            tryGenericIsoDepRead(isoDep, allData);
+
+        appendLog("=== CPU command variants ===");
+        byte[][] balCmds = {
+            b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x04, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+            b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x10, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+            b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x20, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+            b(0x80, 0x5C, 0x00, 0x01, 0x02),
+            b(0x80, 0x5C, 0x00, 0x02, 0x02),
+            b(0x00, (byte)0xCA, 0x01, 0x00, 0x00),
+            b(0x80, (byte)byte)0x84, 0x00, 0x00, 0x00),
+        };
+        for (byte[] cmd : balCmds) {
+            byte[] r = isoDep.transceive(cmd);
+            logResp("VAR", cmd, r);
+            if (r != null && r.length >= 2) {
+                int csw = sw(r);
+                if (csw == 0x4AF1 || csw == 0x9000) {
+                    byte[] cd = dataOf(r);
+                    if (cd.length > 0) {
+                        appendLog("OK! Variant cmd success! Data: " + bytesToHex(cd));
+                        allData.append("VAR_DATA:").append(bytesToHex(cd)).append("\n");
+                        parseAndShowBalance(cd);
+                        gotData = true;
+                    }
+                }
+            }
         }
+
         lastRawData = allData.toString();
-        tvRawData.setText(lastRawData.isEmpty() ? "（无数据）" : lastRawData);
-        tvStatus.setText(foundApp ? "✅ 读取完成" : "⚠️ 部分读取");
+        tvRawData.setText(lastRawData.isEmpty() ? "(No data)" : lastRawData);
+        tvStatus.setText(gotData ? "Read OK!" : "No data found");
+    }
+
+    private void tryNfcA(Tag tag) {
+        NfcA nfcA = NfcA.get(tag);
+        if (nfcA == null) {
+            appendLog("NfcA not supported");
+            tvStatus.setText("Unsupported card type");
+            return;
+        }
+        try {
+            nfcA.connect();
+            appendLog("NfcA ATQA:" + bytesToHex(nfcA.getAtqa()) + " SAK:" + String.format("%02X", nfcA.getSak()));
+            for (int block = 0; block <= 12; block++) {
+                byte[] cmd = b(0x30, block);
+                byte[] resp = nfcA.transceive(cmd);
+                if (resp != null && resp.length >= 16) {
+                    appendLog("Block" + block + ": " + bytesToHex(resp));
+                    parseAndShowBalance(resp);
+                }
+            }
+            nfcA.close();
+        } catch (Exception e) {
+            appendLog("NfcA failed: " + e.getMessage());
+        }
     }
 
     private byte[] buildSelectApdu(byte[] aid) {
@@ -276,112 +386,42 @@ public class MainActivity extends Activity {
         return apdu;
     }
 
-    private void readCardFiles(IsoDep isoDep, StringBuilder output) throws IOException {
-        appendLog("--- 读取卡片文件 ---");
-        byte[][] cmds = {
-                b(0x00, 0xB0, 0x00, 0x00, 0x00),
-                b(0x00, 0xB0, 0x00, 0x10, 0x00),
-                b(0x00, 0xB0, 0x00, 0x14, 0x00),
-                b(0x00, 0xB0, 0x00, 0x18, 0x00),
-                b(0x00, 0xB0, 0x00, 0x1C, 0x00),
-                b(0x00, 0xB0, 0x00, 0x20, 0x00),
-                b(0x00, 0xB2, 0x01, 0xD0, 0x00),
-                b(0x00, 0xB2, 0x02, 0xD0, 0x00),
-                b(0x80, 0x5C, 0x00, 0x01, 0x00),
-                b(0x00, 0xCA, 0x01, 0x00, 0x00),
-                b(0x80, 0x84, 0x00, 0x00, 0x00),
-        };
-        for (byte[] cmd : cmds) {
-            try {
-                appendLog("发送: " + bytesToHex(cmd));
-                byte[] resp = isoDep.transceive(cmd);
-                if (resp != null && resp.length >= 2) {
-                    int sw1 = resp[resp.length - 2] & 0xFF;
-                    int sw2 = resp[resp.length - 1] & 0xFF;
-                    byte[] data = resp.length > 2 ? Arrays.copyOf(resp, resp.length - 2) : new byte[0];
-                    appendLog("  响应: " + bytesToHex(data) + " [" + String.format("%02X%02X", sw1, sw2) + "]");
-                    output.append("CMD:").append(bytesToHex(cmd)).append(" DATA:").append(bytesToHex(data)).append("\n");
-                    if (sw1 == 0x90 && sw2 == 0x00 && data.length > 0) parseAndShowBalance(data);
-                }
-            } catch (Exception e) { appendLog("  命令失败: " + e.getMessage()); }
-        }
+    private int sw(byte[] resp) {
+        if (resp == null || resp.length < 2) return -1;
+        return (resp[resp.length-2] & 0xFF) * 256 + (resp[resp.length-1] & 0xFF);
     }
 
-    private void tryGenericIsoDepRead(IsoDep isoDep, StringBuilder output) throws IOException {
-        appendLog("--- 通用探测 ---");
-        for (int sfi = 0; sfi <= 8; sfi++) {
-            for (int f = 0; f <= 0x2F; f++) {
-                byte[] cmd = b(0x00, 0xB0, (byte)(0x80 | f), (sfi << 3) | 0x04, 0x00);
-                try {
-                    byte[] resp = isoDep.transceive(cmd);
-                    if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte)0x90 && resp[resp.length - 1] == 0x00) {
-                        byte[] data = Arrays.copyOf(resp, resp.length - 2);
-                        if (data.length > 0) {
-                            appendLog("文件 F=" + String.format("%02X", f) + " SFI=" + sfi + ": " + bytesToHex(data));
-                            output.append("FILE").append(String.format("%02X", f)).append("SFI").append(String.valueOf(sfi)).append(":").append(bytesToHex(data)).append("\n");
-                            parseAndShowBalance(data);
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-        }
-        appendLog("--- 深度探测：读所有页 ---");
-        for (int page = 0; page <= 0xFF; page++) {
-            byte[] cmd = b(0x00, 0xB0, 0x00, page, 0x04);
-            try {
-                byte[] resp = isoDep.transceive(cmd);
-                if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte)0x90 && resp[resp.length - 1] == 0x00) {
-                    byte[] data = Arrays.copyOf(resp, resp.length - 2);
-                    if (data.length > 0 && !isAllZeros(data)) {
-                        appendLog("页 " + String.format("%02X", page) + ": " + bytesToHex(data));
-                        output.append("PAGE").append(String.format("%02X", page)).append(":").append(bytesToHex(data)).append("\n");
-                        parseAndShowBalance(data);
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
+    private byte[] dataOf(byte[] resp) {
+        if (resp == null || resp.length <= 2) return new byte[0];
+        return Arrays.copyOf(resp, resp.length - 2);
+    }
+
+    private void logResp(String tag, byte[] cmd, byte[] resp) {
+        String cmdHex = bytesToHex(cmd);
+        String respHex = resp != null ? bytesToHex(resp) : "null";
+        appendLog("  " + tag + " TX:" + cmdHex + " RX:" + respHex);
     }
 
     private boolean isAllZeros(byte[] data) {
+        if (data == null) return true;
         for (byte bb : data) if (bb != 0) return false;
         return true;
     }
 
-    private void tryNfcA(Tag tag) {
-        NfcA nfcA = NfcA.get(tag);
-        if (nfcA == null) {
-            appendLog("不支持 NfcA");
-            tvStatus.setText("❌ 不支持的卡片类型");
-            return;
-        }
-        try {
-            nfcA.connect();
-            appendLog("NfcA ATQA:" + bytesToHex(nfcA.getAtqa()) + " SAK:" + String.format("%02X", nfcA.getSak()));
-            for (int block = 0; block <= 12; block++) {
-                byte[] cmd = b(0x30, block);
-                byte[] resp = nfcA.transceive(cmd);
-                if (resp != null && resp.length >= 16) {
-                    appendLog("块" + block + ": " + bytesToHex(resp));
-                    parseAndShowBalance(resp);
-                }
-            }
-            nfcA.close();
-        } catch (Exception e) { appendLog("NfcA 失败: " + e.getMessage()); }
-    }
-
     private void parseAndShowBalance(byte[] data) {
         if (data == null || data.length < 4) return;
-        appendLog("--- 尝试解析余额 ---");
-        appendLog("原始: " + bytesToHex(data));
+        appendLog("--- Try parse balance ---");
+        appendLog("Raw: " + bytesToHex(data));
+        // Try BCD-like format: bytes as BCD digits
         if (data.length >= 4) {
             long bal1 = ((data[0] & 0xFF) * 10000 + (data[1] & 0xFF) * 100 + (data[2] & 0xFF));
-            tvBalance.setText("💧 余额: " + String.format("%.2f", bal1 / 100.0) + " 元");
-            appendLog("余额: " + String.format("%.2f", bal1 / 100.0) + " 元");
+            tvBalance.setText("Balance: " + String.format("%.2f", bal1 / 100.0) + " yuan");
+            appendLog("Balance: " + String.format("%.2f", bal1 / 100.0) + " yuan");
         }
         if (data.length >= 8) {
             int hi = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
             int lo = ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
-            appendLog("格式2 余额: " + String.format("%.2f", hi * 100 + lo) + " 元");
+            appendLog("Format2 balance: " + String.format("%.2f", hi * 100 + lo) + " yuan");
         }
     }
 
@@ -392,27 +432,22 @@ public class MainActivity extends Activity {
         if (tvLog != null) tvLog.setText(logBuilder.toString());
     }
 
-    // ========== 自动保存 ==========
     private void autoSaveDataToFile() {
-        if (lastRawData == null || lastRawData.isEmpty()) {
-            appendLog("（无原始数据，跳过保存）");
-            return;
-        }
-        saveDataToFile("[自动]");
+        if (lastRawData == null || lastRawData.isEmpty()) return;
+        saveDataToFile("[Auto]");
     }
 
     private void saveDataToFile() {
-        saveDataToFile("[手动]");
+        saveDataToFile("[Manual]");
     }
 
     private void saveDataToFile(String prefix) {
         if (lastRawData == null || lastRawData.isEmpty()) {
-            appendLog("（无数据可保存）");
+            appendLog("(No data to save)");
             return;
         }
         String fn = "water_card_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".txt";
         File dir;
-        // Android 10+ 用 app-specific 目录，不需要权限
         File externalDir = getExternalFilesDir(null);
         if (externalDir != null) {
             dir = new File(externalDir, "water_card_dump");
@@ -421,23 +456,23 @@ public class MainActivity extends Activity {
         }
         if (!dir.exists()) {
             if (!dir.mkdirs()) {
-                appendLog("创建目录失败，fallback 到 internal");
+                appendLog("mkdir failed, fallback to internal");
                 dir = new File(getFilesDir(), "water_card_dump");
                 dir.mkdirs();
             }
         }
         File f = new File(dir, fn);
         try (FileWriter fw = new FileWriter(f)) {
-            fw.write("=== 水卡读取数据 ===\n");
-            fw.write("时间: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()) + "\n");
+            fw.write("=== Water Card Data ===\n");
+            fw.write("Time: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()) + "\n");
             fw.write("UID: " + lastUid + "\n");
             fw.write("ATS: " + lastAts + "\n");
-            fw.write("=== HEX 数据 ===\n");
+            fw.write("=== HEX Data ===\n");
             fw.write(lastRawData);
-            appendLog(prefix + "已保存: " + f.getAbsolutePath());
+            appendLog(prefix + "Saved: " + f.getAbsolutePath());
         } catch (IOException e) {
-            appendLog("保存失败: " + e.getMessage());
-            Log.e(TAG, "保存文件失败", e);
+            appendLog("Save failed: " + e.getMessage());
+            Log.e(TAG, "Save file failed", e);
         }
     }
 
