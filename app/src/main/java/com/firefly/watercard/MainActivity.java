@@ -164,7 +164,9 @@ public class MainActivity extends Activity {
         IsoDep isoDep = IsoDep.get(tag);
         if (isoDep != null) {
             try {
+                isoDep.setTimeout(1500);
                 isoDep.connect();
+                Thread.sleep(50);
                 byte[] hb = isoDep.getHistoricalBytes();
                 lastAts = hb != null ? bytesToHex(hb) : "null";
                 tvAts.setText("ATS: " + lastAts);
@@ -189,20 +191,43 @@ public class MainActivity extends Activity {
         StringBuilder allData = new StringBuilder();
         boolean gotData = false;
 
-        appendLog("=== Try KNOWN CPU command ===");
-        byte[] r0 = isoDep.transceive(KNOWN_CPU_CMD);
-        logResp("CPU", KNOWN_CPU_CMD, r0);
-        if (r0 != null && r0.length >= 2) {
-            int sw = (r0[r0.length-2] & 0xFF) * 256 + (r0[r0.length-1] & 0xFF);
-            if (sw == 0x4AF1 || sw == 0x9000) {
-                byte[] d = dataOf(r0);
-                if (d.length > 0) {
-                    appendLog("OK! CPU cmd success! Data: " + bytesToHex(d));
-                    allData.append("CPU_DATA:").append(bytesToHex(d)).append("\n");
-                    parseAndShowBalance(d);
-                    gotData = true;
+        appendLog("=== STEP 0: KNOWN CPU COMMAND (BEFORE SELECT) ===");
+        try {
+            byte[] r0 = isoDep.transceive(KNOWN_CPU_CMD);
+            logResp("KNOWN_CPU", KNOWN_CPU_CMD, r0);
+            if (r0 != null && r0.length >= 2) {
+                int sw = sw(r0);
+                appendLog("  SW=" + String.format("%04X", sw) + " len=" + r0.length);
+                if (sw == 0x4AF1 || sw == 0x9000) {
+                    byte[] d = dataOf(r0);
+                    appendLog("  Data: " + bytesToHex(d) + " (" + d.length + " bytes)");
+                    if (d.length > 0 && !isAllZeros(d)) {
+                        appendLog("SUCCESS! Balance: " + bytesToHex(d));
+                        allData.append("CPU_DATA:").append(bytesToHex(d)).append("\n");
+                        parseAndShowBalance(d);
+                        gotData = true;
+                    }
+                } else if (sw >= 0x6C00) {
+                    // Le wrong, card wants specific length
+                    int correctLe = sw & 0xFF;
+                    appendLog("  Le wrong! Card wants " + correctLe + " bytes, retrying...");
+                    byte[] cmd2 = Arrays.copyOf(KNOWN_CPU_CMD, KNOWN_CPU_CMD.length);
+                    cmd2[cmd2.length - 1] = (byte)correctLe;
+                    byte[] r2 = isoDep.transceive(cmd2);
+                    logResp("CPU_RETRY", cmd2, r2);
+                    if (r2 != null && (sw(r2) == 0x4AF1 || sw(r2) == 0x9000)) {
+                        byte[] d2 = dataOf(r2);
+                        appendLog("  SUCCESS on retry! Data: " + bytesToHex(d2));
+                        allData.append("CPU_RETRY:").append(bytesToHex(d2)).append("\n");
+                        parseAndShowBalance(d2);
+                        gotData = true;
+                    }
+                } else {
+                    appendLog("  SW not success: " + String.format("%04X", sw));
                 }
             }
+        } catch (Exception e) {
+            appendLog("  KNOWN_CPU exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
         appendLog("=== SELECT by File ID -> READ ===");
@@ -229,35 +254,35 @@ public class MainActivity extends Activity {
             logResp("SEL_" + String.format("%04X", fid), sel, selResp);
             if (selSW == 0x9000) {
                 appendLog("  OK! SELECT " + String.format("%04X", fid) + " success");
-                for (int off = 0; off < 256; off += 32) {
+                int[] leVals = {4, 16, 32, 0, 8, 64, 128, 255};
+                for (int le : leVals) {
                     byte[] readCmd = b(0x00, (byte)0xB0,
-                            (byte)(off >> 8), (byte)(off & 0xFF), 0x00);
-                    byte[] rr = isoDep.transceive(readCmd);
-                    byte[] rd = dataOf(rr);
-                    int rsw = rr != null ? sw(rr) : -1;
-                    if (rd.length > 0 && !isAllZeros(rd)) {
-                        appendLog("    READ off=" + off + " SW=" + String.format("%04X", rsw)
-                                + " DATA=" + bytesToHex(rd));
-                        allData.append("S").append(String.format("%04X", fid))
-                               .append("O").append(String.format("%02X", off))
-                               .append(":").append(bytesToHex(rd)).append("\n");
-                        parseAndShowBalance(rd);
-                        gotData = true;
-                    }
-                }
-                for (int sfi = 0; sfi <= 31; sfi++) {
-                    byte[] sfiCmd = b(0x00, (byte)0xB0, 0x00,
-                            (byte)((sfi << 3) | 0x04), 0x00);
+                            (byte)(off >> 8), (byte)(off & 0xFF), (byte)le);
                     try {
-                        byte[] sr = isoDep.transceive(sfiCmd);
-                        byte[] sd = dataOf(sr);
-                        int ssw = sr != null ? sw(sr) : -1;
-                        if (sd.length > 0 && !isAllZeros(sd)) {
-                            appendLog("    SFI=" + sfi + " SW=" + String.format("%04X", ssw)
-                                    + " DATA=" + bytesToHex(sd));
-                            allData.append("SFI").append(String.format("%02X", sfi))
-                                   .append(":").append(bytesToHex(sd)).append("\n");
-                            parseAndShowBalance(sd);
+                        byte[] rr = isoDep.transceive(readCmd);
+                        byte[] rd = dataOf(rr);
+                        int rsw = rr != null ? sw(rr) : -1;
+                        // 6Cxx means "correct Le was xx bytes" - retry with correct length
+                        if (rsw >= 0x6C00) {
+                            int correctLe = rsw & 0xFF;
+                            appendLog("    READ off=" + off + " Le wrong, card wants " + correctLe + " bytes");
+                            byte[] rr2 = isoDep.transceive(b(0x00, (byte)0xB0, (byte)(off >> 8), (byte)(off & 0xFF), (byte)correctLe));
+                            byte[] rd2 = dataOf(rr2);
+                            int rsw2 = rr2 != null ? sw(rr2) : -1;
+                            if (rsw2 == 0x9000 && rd2.length > 0 && !isAllZeros(rd2)) {
+                                appendLog("    READ off=" + off + " Le=" + correctLe + " DATA=" + bytesToHex(rd2));
+                                allData.append("R_").append(String.format("%04X", fid))
+                                       .append("_L").append(correctLe)
+                                       .append(":").append(bytesToHex(rd2)).append("\n");
+                                parseAndShowBalance(rd2);
+                                gotData = true;
+                            }
+                        } else if (rsw == 0x9000 && rd.length > 0 && !isAllZeros(rd)) {
+                            appendLog("    READ off=" + off + " Le=" + le + " DATA=" + bytesToHex(rd));
+                            allData.append("R_").append(String.format("%04X", fid))
+                                   .append("_L").append(le)
+                                   .append(":").append(bytesToHex(rd)).append("\n");
+                            parseAndShowBalance(rd);
                             gotData = true;
                         }
                     } catch (Exception ignored) {}
@@ -265,7 +290,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        appendLog("=== SELECT by AID ===");
+        appendLog("=== CPU command Le variants (after SELECT尝试) ===");
         byte[][] aids = {
             b(0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00),
             b(0xA0, 0x00, 0x00, 0x03, 0x06),
@@ -321,7 +346,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        appendLog("=== CPU command variants ===");
+        appendLog("=== CPU command variants (after SELECT) ===");
         byte[][] balCmds = {
             b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x04, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
             b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x10, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
@@ -332,19 +357,37 @@ public class MainActivity extends Activity {
             b(0x80, (byte)0x84, 0x00, 0x00, 0x00),
         };
         for (byte[] cmd : balCmds) {
-            byte[] r = isoDep.transceive(cmd);
-            logResp("VAR", cmd, r);
-            if (r != null && r.length >= 2) {
-                int csw = sw(r);
-                if (csw == 0x4AF1 || csw == 0x9000) {
-                    byte[] cd = dataOf(r);
-                    if (cd.length > 0) {
-                        appendLog("OK! Variant cmd success! Data: " + bytesToHex(cd));
-                        allData.append("VAR_DATA:").append(bytesToHex(cd)).append("\n");
-                        parseAndShowBalance(cd);
-                        gotData = true;
+            try {
+                byte[] r = isoDep.transceive(cmd);
+                logResp("VAR", cmd, r);
+                if (r != null && r.length >= 2) {
+                    int csw = sw(r);
+                    if (csw == 0x4AF1 || csw == 0x9000) {
+                        byte[] cd = dataOf(r);
+                        if (cd.length > 0) {
+                            appendLog("OK! Variant cmd success! Data: " + bytesToHex(cd));
+                            allData.append("VAR_DATA:").append(bytesToHex(cd)).append("\n");
+                            parseAndShowBalance(cd);
+                            gotData = true;
+                        }
+                    } else if (csw >= 0x6C00) {
+                        int correctLe = csw & 0xFF;
+                        appendLog("  Le wrong, card wants " + correctLe + " bytes");
+                        byte[] r2 = isoDep.transceive(new byte[]{cmd[0], cmd[1], cmd[2], cmd[3], (byte)correctLe});
+                        logResp("VAR_RETRY", r2 != null ? r2 : new byte[0], r2);
+                        if (r2 != null && sw(r2) == 0x9000) {
+                            byte[] cd2 = dataOf(r2);
+                            if (cd2.length > 0) {
+                                appendLog("OK! VAR retry success! Data: " + bytesToHex(cd2));
+                                allData.append("VAR_DATA:").append(bytesToHex(cd2)).append("\n");
+                                parseAndShowBalance(cd2);
+                                gotData = true;
+                            }
+                        }
                     }
                 }
+            } catch (Exception e) {
+                appendLog("  VAR exception: " + e.getMessage());
             }
         }
 
