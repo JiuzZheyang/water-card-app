@@ -199,6 +199,49 @@ public class MainActivity extends Activity {
         StringBuilder allData = new StringBuilder();
         boolean foundApp = false;
 
+        // ── 步骤1：先尝试已知可用的 CPU 卡专用命令 ──
+        appendLog("=== 尝试 CPU 专用命令 ===");
+        byte[][] cpuCmds = {
+                // 已知成功的命令（来自另一款读取相同水卡的 APP）
+                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x44, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+                // 专用命令的各种变体
+                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x04, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x10, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+                b(0x27, 0x02, 0xBE, (byte)0x90, 0x00, 0x20, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
+                // 其他可能的 CPU 卡读余额命令
+                b(0x80, 0x5C, 0x00, 0x01, 0x02),
+                b(0x80, 0x5C, 0x00, 0x02, 0x02),
+                b(0x00, (byte)0xCA, 0x01, 0x00, 0x00),
+                b(0x80, (byte)0x84, 0x00, 0x00, 0x00),
+                // 发送伪装成 SELECT 的自定义命令（INS=BE）
+                b(0x02, (byte)0xBE, (byte)0x90, 0x00, 0x44),
+                b(0x02, (byte)0xBE, (byte)0x90, 0x00, (byte)0xA3),
+        };
+        for (byte[] cmd : cpuCmds) {
+            try {
+                appendLog("发送[CPU]: " + bytesToHex(cmd));
+                byte[] resp = isoDep.transceive(cmd);
+                if (resp != null && resp.length >= 2) {
+                    int sw1 = resp[resp.length - 2] & 0xFF;
+                    int sw2 = resp[resp.length - 1] & 0xFF;
+                    byte[] data = resp.length > 2 ? Arrays.copyOf(resp, resp.length - 2) : new byte[0];
+                    appendLog("  响应: " + bytesToHex(data) + " [" + String.format("%02X%02X", sw1, sw2) + "]");
+                    if (data.length > 0) {
+                        allData.append("CPU_CMD:").append(bytesToHex(cmd)).append(" DATA:").append(bytesToHex(data)).append("\n");
+                        parseAndShowBalance(data);
+                    }
+                    if (sw1 == 0x90 && sw2 == 0x00 && data.length > 0) {
+                        appendLog("  ✅ CPU 命令成功!");
+                        foundApp = true;
+                    }
+                }
+            } catch (Exception e) {
+                appendLog("  命令失败: " + e.getMessage());
+            }
+        }
+
+        // ── 步骤2：标准 AID 选择 ──
+        appendLog("=== 尝试 AID 选择 ===");
         for (int i = 0; i < COMMON_AIDS.length; i++) {
             byte[] aid = COMMON_AIDS[i];
             appendLog("尝试 AID #" + (i + 1) + ": " + bytesToHex(aid));
