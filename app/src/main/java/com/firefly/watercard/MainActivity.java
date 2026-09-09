@@ -337,7 +337,7 @@ public class MainActivity extends Activity {
         }
         if (data.length >= 8) {
             int hi = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
-            int lo = ((data[2] &FF) << 8) | (data[3] & 0xFF);
+            int lo = ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
             appendLog("格式2 余额: " + String.format("%.2f", hi * 100 + lo) + " 元");
         }
     }
