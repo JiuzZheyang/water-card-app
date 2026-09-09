@@ -253,44 +253,92 @@ public class MainActivity extends Activity {
             int selSW = selResp != null ? sw(selResp) : -1;
             logResp("SEL_" + String.format("%04X", fid), sel, selResp);
             if (selSW == 0x9000) {
-                appendLog("  OK! SELECT " + String.format("%04X", fid) + " success");
-                int[] leVals = {4, 16, 32, 0, 8, 64, 128, 255};
-                for (int le : leVals) {
-                    byte[] readCmd = b(0x00, (byte)0xB0,
-                            (byte)(off >> 8), (byte)(off & 0xFF), (byte)le);
-                    try {
-                        byte[] rr = isoDep.transceive(readCmd);
-                        byte[] rd = dataOf(rr);
-                        int rsw = rr != null ? sw(rr) : -1;
-                        // 6Cxx means "correct Le was xx bytes" - retry with correct length
-                        if (rsw >= 0x6C00) {
-                            int correctLe = rsw & 0xFF;
-                            appendLog("    READ off=" + off + " Le wrong, card wants " + correctLe + " bytes");
-                            byte[] rr2 = isoDep.transceive(b(0x00, (byte)0xB0, (byte)(off >> 8), (byte)(off & 0xFF), (byte)correctLe));
-                            byte[] rd2 = dataOf(rr2);
-                            int rsw2 = rr2 != null ? sw(rr2) : -1;
-                            if (rsw2 == 0x9000 && rd2.length > 0 && !isAllZeros(rd2)) {
-                                appendLog("    READ off=" + off + " Le=" + correctLe + " DATA=" + bytesToHex(rd2));
-                                allData.append("R_").append(String.format("%04X", fid))
-                                       .append("_L").append(correctLe)
-                                       .append(":").append(bytesToHex(rd2)).append("\n");
-                                parseAndShowBalance(rd2);
-                                gotData = true;
+                appendLog("  OK! SELECT " + String.format("%04X", fid) + " success, trying READ BINARY...");
+                boolean fileGotData = false;
+                for (int off = 0; off < 256 && !fileGotData; off += 16) {
+                    int[] leVals = {4, 16, 32, 0, 8, 64, 128, 255};
+                    for (int le : leVals) {
+                        byte[] readCmd = b(0x00, (byte)0xB0,
+                                (byte)(off >> 8), (byte)(off & 0xFF), (byte)le);
+                        try {
+                            byte[] rr = isoDep.transceive(readCmd);
+                            int rsw = rr != null ? sw(rr) : -1;
+                            if (rr != null && rr.length >= 2) {
+                                if (rsw >= 0x6C00) {
+                                    int correctLe = rsw & 0xFF;
+                                    appendLog("    READ off=" + off + " Le wrong, card wants " + correctLe + " bytes");
+                                    byte[] rr2 = isoDep.transceive(b(0x00, (byte)0xB0,
+                                            (byte)(off >> 8), (byte)(off & 0xFF), (byte)correctLe));
+                                    byte[] rd2 = dataOf(rr2);
+                                    int rsw2 = rr2 != null ? sw(rr2) : -1;
+                                    if (rsw2 == 0x9000 && rd2.length > 0 && !isAllZeros(rd2)) {
+                                        appendLog("    READ off=" + off + " Le=" + correctLe
+                                                + " DATA=" + bytesToHex(rd2));
+                                        allData.append("R_").append(String.format("%04X", fid))
+                                               .append("_O").append(String.format("%02X", off))
+                                               .append(":").append(bytesToHex(rd2)).append("\n");
+                                        parseAndShowBalance(rd2);
+                                        gotData = true;
+                                        fileGotData = true;
+                                    }
+                                } else if (rsw == 0x9000) {
+                                    byte[] rd = dataOf(rr);
+                                    if (rd.length > 0 && !isAllZeros(rd)) {
+                                        appendLog("    READ off=" + off + " Le=" + le
+                                                + " DATA=" + bytesToHex(rd));
+                                        allData.append("R_").append(String.format("%04X", fid))
+                                               .append("_O").append(String.format("%02X", off))
+                                               .append(":").append(bytesToHex(rd)).append("\n");
+                                        parseAndShowBalance(rd);
+                                        gotData = true;
+                                        fileGotData = true;
+                                    }
+                                }
                             }
-                        } else if (rsw == 0x9000 && rd.length > 0 && !isAllZeros(rd)) {
-                            appendLog("    READ off=" + off + " Le=" + le + " DATA=" + bytesToHex(rd));
-                            allData.append("R_").append(String.format("%04X", fid))
-                                   .append("_L").append(le)
-                                   .append(":").append(bytesToHex(rd)).append("\n");
-                            parseAndShowBalance(rd);
-                            gotData = true;
+                        } catch (Exception ignored) {}
+                    }
+                }
+                // Also try SFI-based READ after successful SELECT
+                if (!fileGotData) {
+                    for (int sfi = 0; sfi <= 31 && !fileGotData; sfi++) {
+                        for (int le : new int[]{0, 4, 16, 32, 64}) {
+                            byte[] sfiCmd = b(0x00, (byte)0xB0,
+                                    0x00, (byte)((sfi << 3) | 0x04), (byte)le);
+                            try {
+                                byte[] sr = isoDep.transceive(sfiCmd);
+                                byte[] sd = dataOf(sr);
+                                int ssw = sr != null ? sw(sr) : -1;
+                                if (ssw >= 0x6C00) {
+                                    int correctLe = ssw & 0xFF;
+                                    byte[] sr2 = isoDep.transceive(b(0x00, (byte)0xB0,
+                                            0x00, (byte)((sfi << 3) | 0x04), (byte)correctLe));
+                                    byte[] sd2 = dataOf(sr2);
+                                    int ssw2 = sr2 != null ? sw(sr2) : -1;
+                                    if (ssw2 == 0x9000 && sd2.length > 0 && !isAllZeros(sd2)) {
+                                        appendLog("    SFI=" + sfi + " Le=" + correctLe
+                                                + " DATA=" + bytesToHex(sd2));
+                                        allData.append("SFI_").append(String.format("%02X", sfi))
+                                               .append(":").append(bytesToHex(sd2)).append("\n");
+                                        parseAndShowBalance(sd2);
+                                        gotData = true;
+                                        fileGotData = true;
+                                    }
+                                } else if (ssw == 0x9000 && sd.length > 0 && !isAllZeros(sd)) {
+                                    appendLog("    SFI=" + sfi + " Le=" + le + " DATA=" + bytesToHex(sd));
+                                    allData.append("SFI_").append(String.format("%02X", sfi))
+                                           .append(":").append(bytesToHex(sd)).append("\n");
+                                    parseAndShowBalance(sd);
+                                    gotData = true;
+                                    fileGotData = true;
+                                }
+                            } catch (Exception ignored) {}
                         }
-                    } catch (Exception ignored) {}
+                    }
                 }
             }
         }
 
-        appendLog("=== CPU command Le variants (after SELECT尝试) ===");
+        appendLog("=== STEP 2: SELECT by AID -> READ RECORD / READ BINARY ===");
         byte[][] aids = {
             b(0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00),
             b(0xA0, 0x00, 0x00, 0x03, 0x06),
@@ -351,10 +399,11 @@ public class MainActivity extends Activity {
             b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x04, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
             b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x10, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
             b(0x27, 0x02, (byte)0xBE, (byte)0x90, 0x00, 0x20, (byte)0xA3, 0x00, 0x00, 0x00, (byte)0xFD, 0x00, 0x00, 0x00, (byte)0xFA),
-            b(0x80, 0x5C, 0x00, 0x01, 0x02),
-            b(0x80, 0x5C, 0x00, 0x02, 0x02),
-            b(0x00, (byte)0xCA, 0x01, 0x00, 0x00),
-            b(0x80, (byte)0x84, 0x00, 0x00, 0x00),
+            // GET BALANCE: 6C04 means card wants 4 bytes, so Le should be 4
+            b(0x80, 0x5C, 0x00, 0x01, 0x04),
+            b(0x80, 0x5C, 0x00, 0x02, 0x04),
+            b(0x00, (byte)0xCA, 0x01, 0x00, 0x04),
+            b(0x80, (byte)0x84, 0x00, 0x00, 0x10),
         };
         for (byte[] cmd : balCmds) {
             try {
