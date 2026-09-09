@@ -190,6 +190,9 @@ public class MainActivity extends Activity {
             appendLog("尝试 NfcA...");
             tryNfcA(tag);
         }
+
+        // 贴卡即自动保存
+        autoSaveDataToFile();
     }
 
     private void readIsoDepCard(IsoDep isoDep) throws IOException {
@@ -263,9 +266,9 @@ public class MainActivity extends Activity {
 
     private void tryGenericIsoDepRead(IsoDep isoDep, StringBuilder output) throws IOException {
         appendLog("--- 通用探测 ---");
-        for (int sfi = 0; sfi <= 7; sfi++) {
-            for (int f = 0; f <= 0x1F; f++) {
-                byte[] cmd = b(0x00, 0xB0, 0x80 | f, (sfi << 3) | 0x04, 0x00);
+        for (int sfi = 0; sfi <= 8; sfi++) {
+            for (int f = 0; f <= 0x2F; f++) {
+                byte[] cmd = b(0x00, 0xB0, (byte)(0x80 | f), (sfi << 3) | 0x04, 0x00);
                 try {
                     byte[] resp = isoDep.transceive(cmd);
                     if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte)0x90 && resp[resp.length - 1] == 0x00) {
@@ -279,6 +282,26 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {}
             }
         }
+        appendLog("--- 深度探测：读所有页 ---");
+        for (int page = 0; page <= 0xFF; page++) {
+            byte[] cmd = b(0x00, 0xB0, 0x00, page, 0x04);
+            try {
+                byte[] resp = isoDep.transceive(cmd);
+                if (resp != null && resp.length >= 2 && resp[resp.length - 2] == (byte)0x90 && resp[resp.length - 1] == 0x00) {
+                    byte[] data = Arrays.copyOf(resp, resp.length - 2);
+                    if (data.length > 0 && !isAllZeros(data)) {
+                        appendLog("页 " + String.format("%02X", page) + ": " + bytesToHex(data));
+                        output.append("PAGE").append(String.format("%02X", page)).append(":").append(bytesToHex(data)).append("\n");
+                        parseAndShowBalance(data);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private boolean isAllZeros(byte[] data) {
+        for (byte bb : data) if (bb != 0) return false;
+        return true;
     }
 
     private void tryNfcA(Tag tag) {
@@ -291,8 +314,14 @@ public class MainActivity extends Activity {
         try {
             nfcA.connect();
             appendLog("NfcA ATQA:" + bytesToHex(nfcA.getAtqa()) + " SAK:" + String.format("%02X", nfcA.getSak()));
-            byte[] resp = nfcA.transceive(b(0x30, 0x00));
-            if (resp != null) appendLog("块0: " + bytesToHex(resp));
+            for (int block = 0; block <= 12; block++) {
+                byte[] cmd = b(0x30, block);
+                byte[] resp = nfcA.transceive(cmd);
+                if (resp != null && resp.length >= 16) {
+                    appendLog("块" + block + ": " + bytesToHex(resp));
+                    parseAndShowBalance(resp);
+                }
+            }
             nfcA.close();
         } catch (Exception e) { appendLog("NfcA 失败: " + e.getMessage()); }
     }
@@ -306,6 +335,11 @@ public class MainActivity extends Activity {
             tvBalance.setText("💧 余额: " + String.format("%.2f", bal1 / 100.0) + " 元");
             appendLog("余额: " + String.format("%.2f", bal1 / 100.0) + " 元");
         }
+        if (data.length >= 8) {
+            int hi = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
+            int lo = ((data[2] &FF) << 8) | (data[3] & 0xFF);
+            appendLog("格式2 余额: " + String.format("%.2f", hi * 100 + lo) + " 元");
+        }
     }
 
     private void appendLog(String msg) {
@@ -315,11 +349,40 @@ public class MainActivity extends Activity {
         if (tvLog != null) tvLog.setText(logBuilder.toString());
     }
 
+    // ========== 自动保存 ==========
+    private void autoSaveDataToFile() {
+        if (lastRawData == null || lastRawData.isEmpty()) {
+            appendLog("（无原始数据，跳过保存）");
+            return;
+        }
+        saveDataToFile("[自动]");
+    }
+
     private void saveDataToFile() {
-        if (lastRawData.isEmpty()) return;
+        saveDataToFile("[手动]");
+    }
+
+    private void saveDataToFile(String prefix) {
+        if (lastRawData == null || lastRawData.isEmpty()) {
+            appendLog("（无数据可保存）");
+            return;
+        }
         String fn = "water_card_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".txt";
-        File dir = new File("/sdcard/water_card_dump/");
-        if (!dir.exists()) dir.mkdirs();
+        File dir;
+        // Android 10+ 用 app-specific 目录，不需要权限
+        File externalDir = getExternalFilesDir(null);
+        if (externalDir != null) {
+            dir = new File(externalDir, "water_card_dump");
+        } else {
+            dir = new File(getFilesDir(), "water_card_dump");
+        }
+        if (!dir.exists()) {
+            if (!dir.mkdirs()) {
+                appendLog("创建目录失败，fallback 到 internal");
+                dir = new File(getFilesDir(), "water_card_dump");
+                dir.mkdirs();
+            }
+        }
         File f = new File(dir, fn);
         try (FileWriter fw = new FileWriter(f)) {
             fw.write("=== 水卡读取数据 ===\n");
@@ -328,8 +391,11 @@ public class MainActivity extends Activity {
             fw.write("ATS: " + lastAts + "\n");
             fw.write("=== HEX 数据 ===\n");
             fw.write(lastRawData);
-            appendLog("已保存到: " + f.getAbsolutePath());
-        } catch (IOException e) { appendLog("保存失败: " + e.getMessage()); }
+            appendLog(prefix + "已保存: " + f.getAbsolutePath());
+        } catch (IOException e) {
+            appendLog("保存失败: " + e.getMessage());
+            Log.e(TAG, "保存文件失败", e);
+        }
     }
 
     private static String bytesToHex(byte[] b) {
